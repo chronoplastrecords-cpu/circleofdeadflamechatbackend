@@ -1,127 +1,60 @@
-const socket = io('https://circleofdeadflamechatbackend.onrender.com');
-const messageContainer = document.getElementById('chatMessages');
-const inputField = document.getElementById('userInput');
-const typingIndicator = document.getElementById('typingIndicator');
-// NEW: Reference to the user list in your HTML
-const userListElement = document.getElementById('userList'); 
+const io = require("socket.io")(process.env.PORT || 3000, {
+  cors: {
+    origin: "*",
+    methods: ["GET", "POST"]
+  }
+});
 
-let userName = "";
-let hasJoined = false;
+const users = {};
+// Ensure this matches the Environment Variable name you set in Render
+const CHAT_PASSWORD = process.env.MY_CHAT_PASS || "admin123";
 
-// --- JOIN LOGIC ---
+console.log("Server is starting up...");
 
-function toggleChat() {
-    const container = document.getElementById('chatContainer');
-    
-    if (container.style.display !== 'flex' && !hasJoined) {
-        const nameInput = prompt('Enter your screen name:');
-        const passInput = prompt('Enter the chat password:');
-        
-        if (nameInput && passInput) {
-            userName = nameInput;
-            socket.emit('new-user', { name: nameInput, password: passInput });
-        } else {
-            alert("Name and password are required!");
-            return;
-        }
-    }
-    container.style.display = (container.style.display === 'flex') ? 'none' : 'flex';
+// Helper to broadcast the current list to everyone
+function broadcastUserList() {
+  const names = Object.values(users);
+  io.emit('update-user-list', names);
 }
 
-// --- SERVER LISTENERS ---
+io.on("connection", (socket) => {
+  
+  socket.on("new-user", (data) => {
+    if (data.password === CHAT_PASSWORD) {
+      users[socket.id] = data.name;
+      socket.emit("auth-success");
+      socket.broadcast.emit("user-connected", data.name);
+      
+      // Send the updated list of names
+      broadcastUserList();
+    } else {
+      socket.emit("auth-error", "Incorrect password!");
+    }
+  });
 
-socket.on('auth-success', () => {
-    hasJoined = true;
-    appendMessage('Access Granted. Welcome to the trenches, maggot!', 'bot');
-});
-
-socket.on('auth-error', (errorMsg) => {
-    hasJoined = false;
-    alert(errorMsg);
-    document.getElementById('chatContainer').style.display = 'none';
-});
-
-// NEW: This listener updates the "Online" list whenever someone joins or leaves
-socket.on('update-user-list', (names) => {
-    if (!userListElement) return; // Safety check
-    userListElement.innerHTML = ''; // Clear current list
-    
-    names.forEach(name => {
-        const li = document.createElement('li');
-        li.style.listStyle = "none";
-        li.style.padding = "2px 0";
-        li.innerText = `● ${name}`;
-        userListElement.appendChild(li);
+  socket.on("send-chat-message", (message) => {
+    socket.broadcast.emit("chat-message", {
+      message: message,
+      name: users[socket.id]
     });
-});
+  });
 
-socket.on('chat-message', data => {
-    appendMessage(`${data.name}: ${data.message}`, 'bot');
-});
+  socket.on("typing", () => {
+    socket.broadcast.emit("user-typing", users[socket.id]);
+  });
 
-socket.on('user-connected', name => {
-    showSystemMessage(`${name} connected`);
-});
+  socket.on("stop-typing", () => {
+    socket.broadcast.emit("user-stop-typing");
+  });
 
-socket.on('user-disconnected', name => {
-    showSystemMessage(`${name} disconnected`);
-});
-
-socket.on('user-typing', (name) => {
-    typingIndicator.innerText = `${name} is typing...`;
-    typingIndicator.style.display = 'block';
-});
-
-socket.on('user-stop-typing', () => {
-    typingIndicator.style.display = 'none';
-});
-
-// --- CORE FUNCTIONS ---
-
-let typingTimeout;
-inputField.addEventListener('keydown', () => {
-    if (!hasJoined) return;
-    socket.emit('typing');
-    clearTimeout(typingTimeout);
-    typingTimeout = setTimeout(() => socket.emit('stop-typing'), 1000);
-});
-
-function sendMessage() {
-    const message = inputField.value.trim();
-    if (message !== "" && hasJoined) {
-        appendMessage(`You: ${message}`, 'user');
-        socket.emit('send-chat-message', message);
-        socket.emit('stop-typing');
-        inputField.value = '';
+  socket.on("disconnect", () => {
+    if (users[socket.id]) {
+      const name = users[socket.id];
+      socket.broadcast.emit("user-disconnected", name);
+      delete users[socket.id];
+      
+      // Update the list for everyone else
+      broadcastUserList();
     }
-}
-
-function appendMessage(text, sender) {
-    const msgDiv = document.createElement('div');
-    msgDiv.classList.add('message', sender);
-    msgDiv.innerText = text;
-    messageContainer.insertBefore(msgDiv, typingIndicator);
-    messageContainer.scrollTop = messageContainer.scrollHeight;
-}
-
-function showSystemMessage(text) {
-    const systemMsg = document.createElement('div');
-    systemMsg.style.cssText = "color: #ffffff; font-size: 10px; text-align: center; margin: 5px; transition: opacity 0.5s ease;";
-    systemMsg.innerText = `— ${text} —`;
-    
-    messageContainer.insertBefore(systemMsg, typingIndicator);
-    messageContainer.scrollTop = messageContainer.scrollHeight;
-
-    setTimeout(() => {
-        systemMsg.style.opacity = '0';
-        setTimeout(() => systemMsg.remove(), 500);
-    }, 5000);
-}
-
-function handleKey(event) {
-    if (event.key === "Enter") sendMessage();
-}
-
-window.addEventListener('beforeunload', () => {
-    console.log("User has left the station.");
+  });
 });
