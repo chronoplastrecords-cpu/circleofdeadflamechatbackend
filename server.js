@@ -125,14 +125,3 @@ function handleKey(event) {
 window.addEventListener('beforeunload', () => {
     console.log("User has left the station.");
 });
-
-  socket.on("stop-typing", () => {
-    socket.broadcast.emit("user-stop-typing");
-  });
-
-  socket.on("disconnect", () => {
-    socket.broadcast.emit("user-disconnected", users[socket.id]);
-    delete users[socket.id];
-  });
-});
-
